@@ -65,8 +65,8 @@ A production-grade, ultra-low-latency, multilingual conversational AI assistant 
 
 ### 2. Clone the Repository
 ```bash
-git clone https://github.com/your-username/voice-agent-inworld.git
-cd voice-agent-inworld
+git clone https://github.com/amansharma2005/Inworld-Multilingual-Realtime-AI-Voice-Agent-Desktop-Companion.git
+cd Inworld-Multilingual-Realtime-AI-Voice-Agent-Desktop-Companion
 ```
 
 ### 3. Install All Dependencies
