@@ -1,0 +1,19 @@
+# Auto detect text files and normalize line endings to LF on commit
+* text=auto eol=lf
+
+# Explicitly declare text files you want to always be normalized and not modified
+*.ts text eol=lf
+*.tsx text eol=lf
+*.js text eol=lf
+*.json text eol=lf
+*.css text eol=lf
+*.html text eol=lf
+*.md text eol=lf
+*.svg text eol=lf
+*.example text eol=lf
+
+# Binary files
+*.png binary
+*.jpg binary
+*.ico binary
+*.webp binary
