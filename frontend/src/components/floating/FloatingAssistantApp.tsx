@@ -32,9 +32,12 @@ export const FloatingAssistantApp: React.FC = () => {
     preferences,
     isAudioMuted,
     audioManager,
+    activeReminder,
     sendMessage,
     stopResponse,
     toggleMute,
+    dismissReminder,
+    snoozeReminder,
   } = useRealtimeSession();
 
   const [isMenuOpen, setIsMenuOpen] = useState(false);
@@ -279,7 +282,33 @@ export const FloatingAssistantApp: React.FC = () => {
         onClick={(e) => e.stopPropagation()}
         className="flex-1 flex flex-col items-center justify-end w-full pb-3 pointer-events-auto"
       >
-        {isKeyboardOpen ? (
+        {activeReminder ? (
+          <div className="w-[320px] p-3 rounded-2xl bg-slate-900/95 border border-amber-500/40 shadow-2xl backdrop-blur-2xl animate-in fade-in slide-in-from-bottom-2 text-xs flex flex-col gap-2">
+            <div className="flex items-center justify-between">
+              <span className="font-bold text-amber-400 flex items-center gap-1.5">
+                <span>⏰ Event Reminder</span>
+              </span>
+              <span className="text-[10px] px-2 py-0.5 rounded-full bg-amber-500/20 text-amber-300 font-semibold">
+                In {activeReminder.minutesUntilStart} min
+              </span>
+            </div>
+            <p className="text-slate-100 font-medium">{activeReminder.title}</p>
+            <div className="flex items-center justify-end gap-2 pt-1 border-t border-white/10">
+              <button
+                onClick={() => snoozeReminder(activeReminder.eventId, 5)}
+                className="px-2.5 py-1 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-300 text-[11px]"
+              >
+                Snooze 5m
+              </button>
+              <button
+                onClick={dismissReminder}
+                className="px-2.5 py-1 rounded-lg bg-amber-500/20 hover:bg-amber-500/30 text-amber-300 font-semibold text-[11px]"
+              >
+                Dismiss
+              </button>
+            </div>
+          </div>
+        ) : isKeyboardOpen ? (
           <CompactKeyboardPanel
             isOpen={isKeyboardOpen}
             onClose={() => setIsKeyboardOpen(false)}

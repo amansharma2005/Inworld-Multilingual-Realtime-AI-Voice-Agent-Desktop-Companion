@@ -58,3 +58,13 @@ export interface InworldTtsOption {
   id: string;
   name: string;
 }
+
+export interface CalendarReminderNotification {
+  type: 'calendar.reminder';
+  eventId: string;
+  title: string;
+  start: string;
+  minutesUntilStart: number;
+  message: string;
+  spokenText: string;
+}

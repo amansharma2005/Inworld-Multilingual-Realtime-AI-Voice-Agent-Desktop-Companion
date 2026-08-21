@@ -9,9 +9,11 @@
     "start": "node dist/server.js"
   },
   "dependencies": {
+    "chrono-node": "^2.10.1",
     "cors": "^2.8.5",
     "dotenv": "^16.4.7",
     "express": "^4.21.2",
+    "googleapis": "^176.0.0",
     "ws": "^8.18.0"
   },
   "devDependencies": {

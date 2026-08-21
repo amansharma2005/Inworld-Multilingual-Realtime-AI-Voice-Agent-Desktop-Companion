@@ -26,6 +26,7 @@ export function useRealtimeSession() {
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [preferences, setPreferences] = useState<UserPreferences>(DEFAULT_PREFERENCES);
   const [isAudioMuted, setIsAudioMuted] = useState<boolean>(false);
+  const [activeReminder, setActiveReminder] = useState<import('../types/realtime.js').CalendarReminderNotification | null>(null);
 
   const wsRef = useRef<WebSocket | null>(null);
   const audioManagerRef = useRef<AudioPlaybackManager | null>(null);
@@ -228,6 +229,38 @@ export function useRealtimeSession() {
         break;
       }
 
+      case 'response.output_text.done': {
+        if (isStoppedRef.current) break;
+        const text = (event.text as string) || '';
+        const currentActiveId = activeMessageIdRef.current;
+        if (currentActiveId && text) {
+          setMessages((prev) =>
+            prev.map((msg) =>
+              msg.id === currentActiveId && text.length >= msg.text.length
+                ? { ...msg, text }
+                : msg
+            )
+          );
+        }
+        break;
+      }
+
+      case 'response.output_audio_transcript.done': {
+        if (isStoppedRef.current) break;
+        const transcript = (event.transcript as string) || '';
+        const currentActiveId = activeMessageIdRef.current;
+        if (currentActiveId && transcript) {
+          setMessages((prev) =>
+            prev.map((msg) =>
+              msg.id === currentActiveId && transcript.length >= msg.text.length
+                ? { ...msg, text: transcript }
+                : msg
+            )
+          );
+        }
+        break;
+      }
+
       case 'response.done': {
         setIsGenerating(false);
         const resp = event.response as {
@@ -259,10 +292,17 @@ export function useRealtimeSession() {
             prev.map((msg) => {
               if (msg.id === currentActiveId) {
                 const isStillPlaying = audioManagerRef.current?.getIsPlaying();
+                const finalText = canonicalText && canonicalText.length >= msg.text.length ? canonicalText : msg.text;
+                const status = isStoppedRef.current
+                  ? 'stopped'
+                  : isStillPlaying
+                  ? 'speaking'
+                  : 'completed';
+
                 return {
                   ...msg,
-                  text: canonicalText && canonicalText.length >= msg.text.length ? canonicalText : msg.text,
-                  status: resp?.status === 'cancelled' ? 'stopped' : isStillPlaying ? 'speaking' : 'completed',
+                  text: finalText,
+                  status,
                   usage: {
                     totalTokens: resp?.usage?.total_tokens,
                     inputTokens: resp?.usage?.input_tokens,
@@ -299,6 +339,15 @@ export function useRealtimeSession() {
         break;
       }
 
+      case 'calendar.reminder': {
+        const reminder = event.reminder as any;
+        if (reminder) {
+          console.log('[useRealtimeSession] Received proactive calendar reminder:', reminder);
+          setActiveReminder(reminder);
+        }
+        break;
+      }
+
       default:
         // Handle unhandled events gracefully
         break;
@@ -327,33 +376,19 @@ export function useRealtimeSession() {
       const trimmed = text.trim();
       if (!trimmed) return;
 
-      // === AUTO-INTERRUPT / BARGE-IN ===
-      // If AI was generating or speaking, immediately cancel previous response and cut off audio
-      if (wsRef.current && wsRef.current.readyState === WebSocket.OPEN) {
-        try {
-          wsRef.current.send(
-            JSON.stringify({
-              type: 'response.cancel',
-            })
-          );
-        } catch (err) {
-          console.warn('[useRealtimeSession] Error sending cancel event on barge-in:', err);
-        }
-      }
-
-      // Immediately silence any ongoing or scheduled audio
+      // Silence any currently playing audio if user speaks/sends new message
       if (audioManagerRef.current) {
         audioManagerRef.current.stop();
         await audioManagerRef.current.ensureContext();
       }
 
-      // Mark previously active assistant message as stopped/completed
+      // Mark previously active assistant message as completed if it had content
       if (activeMessageIdRef.current) {
         const prevActiveId = activeMessageIdRef.current;
         setMessages((prev) =>
           prev.map((msg) =>
             msg.id === prevActiveId && (msg.status === 'generating' || msg.status === 'speaking')
-              ? { ...msg, status: 'stopped' }
+              ? { ...msg, status: msg.text ? 'completed' : 'stopped' }
               : msg
           )
         );
@@ -536,6 +571,23 @@ export function useRealtimeSession() {
     setMessages([]);
   }, [stopResponse]);
 
+  const dismissReminder = useCallback(() => {
+    setActiveReminder(null);
+  }, []);
+
+  const snoozeReminder = useCallback(async (eventId: string, minutes = 5) => {
+    try {
+      await fetch('http://localhost:4000/api/reminders/snooze', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ eventId, minutes }),
+      });
+      setActiveReminder(null);
+    } catch (err) {
+      console.warn('[useRealtimeSession] Error snoozing reminder:', err);
+    }
+  }, []);
+
   return {
     connectionState,
     messages,
@@ -545,12 +597,15 @@ export function useRealtimeSession() {
     preferences,
     isAudioMuted,
     audioManager: audioManagerRef.current,
+    activeReminder,
     sendMessage,
     stopResponse,
     replayMessageAudio,
     updatePreferences,
     toggleMute,
     clearChat,
+    dismissReminder,
+    snoozeReminder,
     reconnect: connect,
   };
 }

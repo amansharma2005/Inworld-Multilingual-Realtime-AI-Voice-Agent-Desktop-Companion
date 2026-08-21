@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useState, useEffect } from 'react';
 import {
   Volume2,
   VolumeX,
@@ -6,6 +6,7 @@ import {
   Trash2,
   Sparkles,
   Bot,
+  Calendar,
 } from 'lucide-react';
 import type { ConnectionState, UserPreferences } from '../types/realtime.js';
 import type { AudioPlaybackManager } from '../services/AudioPlaybackManager.js';
@@ -32,6 +33,19 @@ export const Navbar: React.FC<NavbarProps> = ({
   onOpenSettings,
   onClearChat,
 }) => {
+  const [isCalendarConnected, setIsCalendarConnected] = useState(false);
+
+  useEffect(() => {
+    fetch('http://localhost:4000/api/auth/google/status')
+      .then((res) => (res.ok ? res.json() : null))
+      .then((data) => {
+        if (data?.connected) {
+          setIsCalendarConnected(true);
+        }
+      })
+      .catch(() => { });
+  }, []);
+
   const getStatusBadge = () => {
     switch (connectionState) {
       case 'connected':
@@ -84,7 +98,7 @@ export const Navbar: React.FC<NavbarProps> = ({
             </h1>
           </div>
           <p className="text-xs text-slate-400 hidden sm:block">
-            Speech-to-Speech & Realtime Streaming Assistant
+            Voice AI Assistant with Google Calendar
           </p>
         </div>
       </div>
@@ -101,10 +115,18 @@ export const Navbar: React.FC<NavbarProps> = ({
 
         <div className="h-4 w-px bg-white/10" />
 
-        <div className="flex items-center gap-1.5 text-[11px] text-slate-400">
-          <span>Lang:</span>
-          <span className="text-sky-400 font-medium uppercase">{preferences.language}</span>
-        </div>
+        {/* Google Calendar Pill */}
+        <button
+          onClick={onOpenSettings}
+          title="Google Calendar Integration"
+          className={`flex items-center gap-1.5 px-2 py-0.5 rounded-md text-[11px] font-medium transition-all ${isCalendarConnected
+              ? 'bg-emerald-500/10 text-emerald-400 border border-emerald-500/30'
+              : 'bg-slate-800 text-slate-400 hover:text-slate-200 border border-white/5'
+            }`}
+        >
+          <Calendar className="w-3 h-3" />
+          <span>{isCalendarConnected ? 'Calendar Synced' : 'Calendar Off'}</span>
+        </button>
 
         <div className="h-4 w-px bg-white/10" />
 
@@ -131,11 +153,10 @@ export const Navbar: React.FC<NavbarProps> = ({
         <button
           onClick={onToggleMute}
           title={isAudioMuted ? 'Unmute Audio' : 'Mute Audio'}
-          className={`p-2 rounded-xl border transition-all ${
-            isAudioMuted
+          className={`p-2 rounded-xl border transition-all ${isAudioMuted
               ? 'bg-rose-500/10 border-rose-500/30 text-rose-400 hover:bg-rose-500/20'
               : 'bg-slate-800/80 border-white/10 text-slate-300 hover:text-white hover:bg-slate-700/80'
-          }`}
+            }`}
         >
           {isAudioMuted ? <VolumeX className="w-4 h-4" /> : <Volume2 className="w-4 h-4" />}
         </button>

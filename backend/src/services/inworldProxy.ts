@@ -1,6 +1,8 @@
 import { WebSocket } from 'ws';
 import { config } from '../config/env.js';
 import type { SessionConfig, ServerEvent, ClientEvent } from '../types/inworld.js';
+import { ToolManager } from '../tools/ToolManager.js';
+import type { ToolContext } from '../tools/types.js';
 
 export interface InworldProxyOptions {
   browserWs: WebSocket;
@@ -15,6 +17,8 @@ export class InworldProxySession {
   private isConfigured = false;
   private customConfig: Partial<SessionConfig>;
   private isClosed = false;
+  private toolManager = ToolManager.getInstance();
+  private isExecutingTool = false;
 
   constructor(options: InworldProxyOptions) {
     this.browserWs = options.browserWs;
@@ -30,8 +34,6 @@ export class InworldProxySession {
       return '';
     }
 
-    // Inworld keys are Base64 encoded. If the key already looks base64-encoded (or has no colon),
-    // use directly, otherwise encode if in key:secret format.
     if (rawKey.includes(':')) {
       const encoded = Buffer.from(rawKey).toString('base64');
       return `Basic ${encoded}`;
@@ -45,10 +47,11 @@ export class InworldProxySession {
       model: this.customConfig.model || config.inworldModel,
       instructions:
         this.customConfig.instructions ||
-        `You are an articulate, friendly, and helpful native Hindi and English voice assistant.
+        `You are an articulate, friendly, and helpful native Hindi and English voice assistant with integrated Google Calendar capabilities.
 Understand and respond naturally in the user's preferred language (Hindi, Hinglish, English).
 Be conversational, clear, helpful, and natural. Keep your answers balanced and conversational — informative without being overly verbose or artificial.
-When writing in Hindi (Devanagari script) or Hinglish, always maintain 100% accurate grammar, correct matras (मात्राएँ), and natural phrasing.`,
+When writing in Hindi (Devanagari script) or Hinglish, always maintain 100% accurate grammar, correct matras (मात्राएँ), and natural phrasing.
+When calendar results are provided, convey them smoothly as your own knowledge.`,
       output_modalities: this.customConfig.output_modalities || ['text', 'audio'],
       audio: {
         input: {
@@ -138,7 +141,6 @@ When writing in Hindi (Devanagari script) or Hinglish, always maintain 100% accu
 
         if (event.type === 'session.created') {
           console.log(`[InworldProxy] Upstream session created:`, (event as { session?: { id?: string } }).session?.id);
-          // Send initial session.update with our custom voice and multilingual prompt
           const sessionUpdatePayload = {
             type: 'session.update',
             session: this.getDefaultSessionConfig(),
@@ -174,24 +176,28 @@ When writing in Hindi (Devanagari script) or Hinglish, always maintain 100% accu
 
     this.inworldWs.on('error', (err) => {
       console.error(`[InworldProxy] Inworld WebSocket error:`, err.message);
+      let userFriendlyMessage = `Inworld connection error: ${err.message}`;
+      if (err.message.includes('402')) {
+        userFriendlyMessage =
+          'Inworld API credits exhausted (HTTP 402 Payment Required). Please check your account credits at https://platform.inworld.ai/ or update your INWORLD_API_KEY in .env.';
+      }
       this.sendToBrowser({
         type: 'error',
         error: {
           type: 'upstream_error',
-          message: `Inworld connection error: ${err.message}`,
+          message: userFriendlyMessage,
         },
       });
     });
   }
 
   private setupBrowserHandlers() {
-    this.browserWs.on('message', (data: Buffer | string) => {
+    this.browserWs.on('message', async (data: Buffer | string) => {
       try {
         const rawString = typeof data === 'string' ? data : data.toString('utf-8');
         const clientEvent: ClientEvent = JSON.parse(rawString);
 
         if (clientEvent.type === 'session.update') {
-          // Merge custom config updates
           this.customConfig = {
             ...this.customConfig,
             ...clientEvent.session,
@@ -199,16 +205,83 @@ When writing in Hindi (Devanagari script) or Hinglish, always maintain 100% accu
           console.log(`[InworldProxy] Updating session configuration with client preferences`);
           this.sendToInworld(clientEvent);
         } else if (clientEvent.type === 'conversation.item.create') {
-          console.log(`[InworldProxy] User message received, forwarding to Inworld`);
+          const item = clientEvent.item;
+          const userText = item.content?.[0]?.text?.trim() || '';
+
+          if (item.role === 'user' && userText) {
+            console.log(`[InworldProxy] User message received: "${userText}"`);
+
+            const context: ToolContext = {
+              sessionId: this.sessionId,
+              userMessage: userText,
+            };
+
+            // Check if ToolManager has a tool to handle this message (e.g. Google Calendar)
+            const matchedTool = await this.toolManager.findToolForMessage(userText, context);
+
+            if (matchedTool) {
+              console.log(`[InworldProxy] Matched tool '${matchedTool.name}' for user request.`);
+              this.isExecutingTool = true;
+
+              try {
+                const toolResult = await this.toolManager.executeTool(matchedTool.name, userText, context);
+
+                // Inject structured tool result into Inworld conversation context
+                const augmentedPrompt = `[TOOL RESULT from ${matchedTool.name}]:
+Action: ${toolResult.action}
+Status: ${toolResult.success ? 'SUCCESS' : 'FAILED'}
+Details: ${toolResult.summary}
+${toolResult.error ? `Error: ${toolResult.error}` : ''}
+
+Original User Message: "${userText}"
+Instructions: Respond warmly, clearly, and conversationally to the user in their language (Hindi, Hinglish, or English) conveying the above information smoothly.`;
+
+                const augmentedItemEvent = {
+                  type: 'conversation.item.create',
+                  item: {
+                    type: 'message',
+                    role: 'user',
+                    content: [{ type: 'input_text', text: augmentedPrompt }],
+                  },
+                };
+
+                this.sendToInworld(augmentedItemEvent);
+
+                // Trigger response creation after augmented item is sent
+                this.sendToInworld({
+                  type: 'response.create',
+                  response: {
+                    output_modalities: ['text', 'audio'],
+                  },
+                });
+              } catch (err) {
+                console.error('[InworldProxy] Error during tool execution:', err);
+                // Fallback to normal message
+                this.sendToInworld(clientEvent);
+                this.sendToInworld({
+                  type: 'response.create',
+                  response: { output_modalities: ['text', 'audio'] },
+                });
+              } finally {
+                this.isExecutingTool = false;
+              }
+              return;
+            }
+          }
+
+          // Default: forward regular conversation item to Inworld
           this.sendToInworld(clientEvent);
         } else if (clientEvent.type === 'response.create') {
+          if (this.isExecutingTool) {
+            console.log(`[InworldProxy] Tool execution in progress; suppressing premature client response.create`);
+            return;
+          }
           console.log(`[InworldProxy] Triggering assistant response`);
           this.sendToInworld(clientEvent);
         } else if (clientEvent.type === 'response.cancel') {
           console.log(`[InworldProxy] Cancelling active response`);
           this.sendToInworld(clientEvent);
         } else {
-          // Pass-through any other client events (e.g. input_audio_buffer.append)
           this.sendToInworld(clientEvent);
         }
       } catch (err) {
